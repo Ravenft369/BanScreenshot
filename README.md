@@ -64,6 +64,12 @@ build_exe.bat
 程序（或 exe）同目录下的 `ban_shortcut.ini` 会自动生效，用记事本改完保存即可。
 首次运行自动生成一份带中文注释的模板，`--save-config [路径]` 可以随时再生成。
 
+> **它只读一份 ini，顺序是：① exe / 脚本同目录 → ② 当前工作目录**，取第一个找到的。
+> 所以「改了配置却不生效」几乎都是改错了文件：exe 放哪儿就读哪儿旁边那份。
+> 程序启动时会打印实际使用的路径；如果另一处也存在 ini，会额外提示
+> `！存在但未使用的 ini: …`，照着提示改对的那份即可。
+> 另外这个文件是**运行时自动生成的**，不纳入版本管理，删掉也会自己再长出来。
+
 | 节 | 项 | 说明 |
 | --- | --- | --- |
 | `[general]` | `mode` | `whitelist`（默认，除白名单外所有 Ctrl/Alt/Win 组合全屏蔽）或 `blacklist` |
@@ -81,6 +87,13 @@ build_exe.bat
 也可以在一行里用逗号分隔：`combos = ctrl+c, ctrl+v`。
 
 > ⚠️ `combos =` 下面的每一行**都要缩进**（有个空格就行），否则会报解析错误。
+
+名单语义小抄：
+
+- `combos =` 后面**留空** = 明确表示「一个都不放行」/「不额外屏蔽」
+  （`[allow]` 留空 → 连 `Ctrl+C` 也拦；`[block]` 留空 → 只剩 Win 组合和 PrintScreen 两条整键规则）
+- 把整个 `[allow]` / `[block]` **节删掉** = 沿用程序内置的默认名单
+- `[allow]` 只在 `mode = whitelist` 下参与判定；`blacklist` 模式下它不起作用
 
 写错项名也不会崩：不认识的键名会在启动时提示「不认识的键名」。
 
@@ -228,6 +241,12 @@ EXTRA_BLOCKED_KEYS = "f12"   # 额外整键屏蔽的键，例如 "f12 f10"；填
 驱动后就是），非管理员的钩子看不到发给它的按键，屏蔽就会失效。
 本程序默认会自动弹 UAC 提权（想关掉就用 `--no-elevate` 或把 ini 里 `auto_elevate` 改成 `false`）。
 
+**Q：我改了 `ban_shortcut.ini` 却没生效？**
+先看控制台第一行打印的 `配置文件 : …` 路径 —— 程序**只读那一个**。
+最常见的情况是：exe 在 `dist\` 里，而你改的是别处（比如项目根目录）那份 ini。
+两处都有时启动会提示 `！存在但未使用的 ini: …`，把多余的删掉，或改提示里被使用的那份。
+（另外注意：`[allow]` 白名单只在 `mode = whitelist` 下起作用。）
+
 **Q：exe 和 ini 的关系？换台电脑怎么带？**
 exe 自带默认配置，**单独一个 exe 就能用**；`ban_shortcut.ini` 只在你想要自定义时才需要。
 拷给别人时把 exe + ini 一起复制过去即可，对方无需安装 Python。
@@ -281,7 +300,7 @@ reg add "HKCU\Control Panel\Keyboard" /v PrintScreenKeyForSnippingEnabled /t REG
 | `dist\BanScreenshot.exe` | **打包好的成品**（单文件，双击即用，自动提权） |
 | `build_exe.bat` | 打包脚本：一键生成上面的 exe（需要 Python + 联网装 PyInstaller） |
 | `ban_shortcut.py` | 主程序源码：低层键盘钩子 + 屏蔽规则 + 配置文件/参数处理 |
-| `ban_shortcut.ini` | 配置文件（首次运行自动生成；改这个不用动源码） |
+| `ban_shortcut.ini` | 配置文件（首次运行自动生成，**不纳入版本管理**；exe 只读它旁边那份） |
 | `BanScreenshot.spec` | PyInstaller 打包配置（自动生成，一般不用管） |
 | `run_as_admin.bat` | 用 Python 直接跑时的启动器（自动请求管理员权限） |
 | `README.md` | 本说明 |

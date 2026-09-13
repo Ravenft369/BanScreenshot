@@ -199,6 +199,8 @@ exit = ctrl+alt+shift+f12
 
 [allow]
 ; 白名单：白名单模式下，这些组合键依然放行（每项一行）
+;   · 想“一个都不放行”（连 Ctrl+C 也拦），保留 combos = 但把下面的项全删掉
+;   · 想恢复程序内置的默认名单，把整个 [allow] 节删掉即可
 combos =
     ctrl+c
     ctrl+v
@@ -216,6 +218,8 @@ combos =
 
 [block]
 ; 黑名单：任何模式下都屏蔽（包括纯 Shift 组合）
+;   · 这里清空 = 只保留 Win 组合 + PrintScreen 这两个整键规则
+;   · 想恢复内置默认名单，把整个 [block] 节删掉即可
 combos =
     alt+tab
     alt+shift+tab
@@ -297,6 +301,8 @@ user32.PostThreadMessageW.argtypes = (wt.DWORD, wt.UINT, ctypes.c_size_t, ctypes
 kernel32.GetCurrentThreadId.restype = wt.DWORD
 kernel32.SetConsoleCtrlHandler.argtypes = (PHANDLER_ROUTINE, wt.BOOL)
 kernel32.SetConsoleTitleW.argtypes = (wt.LPCWSTR,)
+kernel32.GetConsoleProcessList.argtypes = (ctypes.POINTER(wt.DWORD), wt.DWORD)
+kernel32.GetConsoleProcessList.restype = wt.DWORD
 
 shell32.IsUserAnAdmin.restype = wt.BOOL
 shell32.ShellExecuteW.restype = ctypes.c_void_p
@@ -623,6 +629,9 @@ def _config_text() -> str:
     ]
     if _unknown_keys:
         lines.append(f"！不认识的键名: {', '.join(_unknown_keys)}（已忽略，请检查拼写）")
+    if _ignored_configs:
+        lines.append(f"！存在但未使用的 ini: {', '.join(_ignored_configs)}")
+        lines.append("  → 程序只读「自己旁边」那份 ini；改的是另一个是不会生效的")
     return "\n".join(lines)
 
 
@@ -682,6 +691,7 @@ def _self_test() -> int:
 # ===========================================================================
 
 _config_path: str | None = None      # 实际生效的配置文件；None = 使用内置默认值
+_ignored_configs: list[str] = []     # 同样存在、但按优先级没被使用的其它 ini（用于提示）
 
 
 def _app_dir() -> str:
@@ -695,14 +705,19 @@ def _default_config_path() -> str:
     return os.path.join(_app_dir(), CONFIG_FILE_NAME)
 
 
-def _find_config_file() -> str | None:
-    """先找程序所在目录，再找当前工作目录。"""
-    tried: list[str] = []
+def _config_candidates() -> list[str]:
+    """按优先级列出所有可能的位置：① 程序/exe 同目录 ② 当前工作目录。"""
+    candidates: list[str] = []
     for folder in (_app_dir(), os.getcwd()):
         path = os.path.join(folder, CONFIG_FILE_NAME)
-        if path in tried:
-            continue
-        tried.append(path)
+        if path not in candidates:
+            candidates.append(path)
+    return candidates
+
+
+def _find_config_file() -> str | None:
+    """exe 永远优先读自己旁边的那份 ini。"""
+    for path in _config_candidates():
         if os.path.isfile(path):
             return path
     return None
@@ -748,14 +763,13 @@ def _load_config_file(path: str) -> None:
         if (h.get("exit") or "").strip():
             EXIT_COMBO = h.get("exit").strip()
 
-    if parser.has_section("allow"):
-        combos = parser["allow"].get("combos")
-        if combos and combos.strip():
-            ALLOW_COMBOS = combos
-    if parser.has_section("block"):
-        combos = parser["block"].get("combos")
-        if combos and combos.strip():
-            BLOCK_COMBOS = combos
+    # 注意语义差别：
+    #   `combos =` 存在但列表为空 —— 明确表示“一个都不放行 / 一个都不额外屏蔽”
+    #   整节删掉（或没有该项）   —— 沿用程序内置默认名单
+    if parser.has_option("allow", "combos"):
+        ALLOW_COMBOS = parser["allow"].get("combos") or ""
+    if parser.has_option("block", "combos"):
+        BLOCK_COMBOS = parser["block"].get("combos") or ""
 
 
 def _write_config_file(path: str, overwrite: bool = False) -> bool:
@@ -795,6 +809,25 @@ def _elevate_self(argv: list[str]) -> bool:
         return False
 
 
+def _console_will_close() -> bool:
+    """控制台里只有本进程时，退出后窗口会立刻消失（典型情况：双击 exe）。"""
+    try:
+        pids = (wt.DWORD * 8)()
+        return kernel32.GetConsoleProcessList(pids, 8) <= 1
+    except Exception:
+        return False
+
+
+def _pause_before_exit() -> None:
+    """双击运行时留个“按回车退出”，否则出错信息会一闪而过看不见。"""
+    if not _console_will_close():
+        return
+    try:
+        input("\n按回车键退出……")
+    except Exception:
+        pass
+
+
 # ===========================================================================
 #                                主程序
 # ===========================================================================
@@ -818,6 +851,7 @@ def main(argv: list[str] | None = None) -> int:
     global MODE, ALLOW_COMBOS, BLOCK_COMBOS, EXTRA_BLOCKED_KEYS
     global BLOCK_WIN_KEY, BLOCK_PRTSCN, AUTO_ELEVATE
     global _observer, _verbose, _use_queue, _log_queue, _thread_id, _config_path
+    global _ignored_configs
 
     parser = argparse.ArgumentParser(
         description="玩游戏时屏蔽误触的截图 / 系统组合快捷键（Windows 键盘钩子）",
@@ -857,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path: str | None = os.path.abspath(args.config)
         if not os.path.isfile(config_path):
             print(f"[错误] 找不到配置文件：{config_path}")
+            _pause_before_exit()
             return 2
     else:
         config_path = _find_config_file()
@@ -868,7 +903,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"       {exc}")
             print("       提示：多行列表（combos = 下面那些行）每一项都要缩进；")
             print("             也可以用记事本“另存为”UTF-8 编码再试。")
+            _pause_before_exit()
             return 2
+
+    # 另一个位置也存在 ini 却没被读取 —— 这正是“改了配置却不生效”的常见原因
+    _ignored_configs = [
+        path for path in _config_candidates()
+        if path != _config_path and os.path.isfile(path)
+    ]
 
     # ---- 2) 命令行参数覆盖 ----
     if args.mode:
@@ -899,6 +941,7 @@ def main(argv: list[str] | None = None) -> int:
             print("用记事本打开它，就能自定义要屏蔽 / 放行哪些快捷键。")
             return 0
         print(f"[错误] 文件已存在：{target}（要覆盖请加 --force）")
+        _pause_before_exit()
         return 2
     if args.list:
         print(_config_text())
@@ -960,6 +1003,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[错误] 安装键盘钩子失败（Win32 错误码 {err}）。")
         print("       请确认已用管理员权限运行；若游戏带有内核级反作弊，请改用 README 的注册表方案。")
         _log_queue.put(None)
+        _pause_before_exit()
         return 1
 
     if args.duration > 0:
@@ -983,6 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f" 键盘钩子已卸载，累计拦截 {_state.blocked_total} 次，快捷键已全部恢复。")
         print("=" * 68)
         _log_queue.put(None)
+        _pause_before_exit()
     return 0
 
 
