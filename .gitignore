@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller 打包产物（exe 通过 GitHub Releases 分发，不塞进仓库）
+build/
+dist/
+*.spec
+
+# 编辑器 / 系统杂物
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
