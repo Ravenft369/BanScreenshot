@@ -83,8 +83,10 @@ build_exe.bat
 | `[block]` | `combos` | 黑名单组合（任何模式下都屏蔽） |
 
 写法很自由：大小写随意，`printscreen`、`lwin`、`control`、`escape`、`del`、`pgup`
-之类别名都能认；`#` `;` 之后是注释；左右键不用区分（`lwin`/`rwin` 统一写 `win`）；
-也可以在一行里用逗号分隔：`combos = ctrl+c, ctrl+v`。
+之类别名都能认；`#` `;` 之后是注释；也可以在一行里用逗号分隔：`combos = ctrl+c, ctrl+v`。
+
+**左右修饰键一律等价**：`lctrl` / `rctrl` → `ctrl`，`lshift` / `rshift` → `shift`，
+`lalt` / `ralt` → `alt`，`lwin` / `rwin` → `win`。所以写哪个都行，判定结果完全一样。
 
 > ⚠️ `combos =` 下面的每一行**都要缩进**（有个空格就行），否则会报解析错误。
 
@@ -240,6 +242,13 @@ EXTRA_BLOCKED_KEYS = "f12"   # 额外整键屏蔽的键，例如 "f12 f10"；填
 钩子只能在“同一权限级别”内看到按键。如果游戏是管理员身份启动的（很多游戏加上反作弊
 驱动后就是），非管理员的钩子看不到发给它的按键，屏蔽就会失效。
 本程序默认会自动弹 UAC 提权（想关掉就用 `--no-elevate` 或把 ini 里 `auto_elevate` 改成 `false`）。
+
+**Q：我的键盘区分左右 Ctrl / Alt / Shift（日志里像 `CTRL+LCTRL`），会影响判定吗？**
+不会（v1.0.1 起）。程序把修饰键统一归一成 `ctrl` / `shift` / `alt` / `win`：
+按住左 Ctrl 再按右 Ctrl、或者两只手各按一个 Ctrl，都只会被理解为「按住 Ctrl」，
+不会冒出 `CTRL+LCTRL` 这种假组合；而且**单独的 Ctrl / Alt / Shift 按下永远放行**
+（游戏要把它们当键位用，Ctrl 的按下如果被吞掉，`Ctrl+C` 在别的程序里也会失效）。
+日志只会在真的命中屏蔽规则时打印，并且按住的自动重复不会刷屏。
 
 **Q：我改了 `ban_shortcut.ini` 却没生效？**
 先看控制台第一行打印的 `配置文件 : …` 路径 —— 程序**只读那一个**。

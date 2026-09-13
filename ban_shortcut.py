@@ -80,6 +80,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from ctypes import wintypes as wt
 
 # ===========================================================================
@@ -143,6 +144,7 @@ EXTRA_BLOCKED_KEYS = "f12"  # 额外要整键屏蔽的键，空格分隔，如 "
 VERBOSE = True              # 每次拦截都在控制台打印一行记录
 AUTO_ELEVATE = True         # 启动时若没有管理员权限，自动弹 UAC 重新启动自己
 CONFIG_FILE_NAME = "ban_shortcut.ini"   # 配置文件名字（放在 exe/脚本同目录）
+VERSION = "1.0.1"           # 版本号（发新版时记得改，会显示在启动信息里）
 
 # 记下内置默认值，--self-test 用它们做确定性测试（不受用户配置影响）
 _BUILTIN_DEFAULTS = {
@@ -375,12 +377,24 @@ _MOD_VKS = {
     0x5B: "win", 0x5C: "win",
 }
 
+# 修饰键左右两半的虚拟键码（左右只影响物理位置，判定时一律当作同一个键）
+_MOD_KEY_VK = {
+    "ctrl": 0xA2, "lctrl": 0xA2, "rctrl": 0xA3,
+    "shift": 0xA0, "lshift": 0xA0, "rshift": 0xA1,
+    "alt": 0xA4, "lalt": 0xA4, "ralt": 0xA5,
+    "win": 0x5B, "lwin": 0x5B, "rwin": 0x5C,
+}
+
 # 名字别名：用户写 printscreen / lwin / control 之类也能认
 ALIASES = {
     "control": "ctrl", "ctl": "ctrl",
     "escape": "esc",
     "printscreen": "prtsc", "prtscr": "prtsc", "print": "prtsc",
     "lwin": "win", "rwin": "win", "windows": "win", "super": "win", "meta": "win",
+    # 左右修饰键统一到一个名字，写 lctrl / rshift 也能认
+    "lctrl": "ctrl", "rctrl": "ctrl", "lcontrol": "ctrl", "rcontrol": "ctrl",
+    "lshift": "shift", "rshift": "shift",
+    "lalt": "alt", "ralt": "alt", "altgr": "alt",
     "del": "delete", "back": "backspace", "return": "enter",
     "pgup": "pageup", "pgdn": "pagedown", "ins": "insert",
     "uparrow": "up", "downarrow": "down", "leftarrow": "left", "rightarrow": "right",
@@ -486,6 +500,19 @@ def _log(text: str, always: bool = False) -> None:
             pass
 
 
+_last_log_at: dict[str, float] = {}
+
+
+def _log_throttled(combo: frozenset[str], text: str, interval: float = 0.4) -> None:
+    """同一个组合键短时间内的重复记录（按住不放产生的自动重复）只打印一次。"""
+    name = _combo_str(combo)
+    now = time.monotonic()
+    if now - _last_log_at.get(name, 0.0) < interval:
+        return
+    _last_log_at[name] = now
+    _log(text)
+
+
 def _printer_loop(q: queue.SimpleQueue) -> None:
     while True:
         item = q.get()
@@ -518,11 +545,14 @@ def _post_quit() -> None:
 def _on_key_down(vk: int) -> bool:
     """返回 True 表示吞掉这个按键（向上不传递）。"""
     mods = {_MOD_VKS[v] for v in _state.held if v in _MOD_VKS}
-    if vk in _MOD_VKS:
+    is_modifier = vk in _MOD_VKS
+    if is_modifier:
         mods.add(_MOD_VKS[vk])
-    key = VK_NAMES.get(vk)
+    # 修饰键统一归一成 ctrl / shift / alt / win：左右 Ctrl、左右 Alt 都按同一个键算，
+    # 否则“按住左 Ctrl 再按右 Ctrl”会被当成 CTRL+LCTRL 这种根本不存在的组合。
+    key = _MOD_VKS.get(vk) or VK_NAMES.get(vk)
     combo = frozenset(mods | {key}) if key else frozenset(mods)
-    has_real_key = key is not None and key not in MOD_ORDER
+    has_real_key = (not is_modifier) and key is not None
 
     # 1) 应急热键优先，不受任何模式影响
     if combo == EXIT_SET:
@@ -558,7 +588,14 @@ def _on_key_down(vk: int) -> bool:
     elif vk in EXTRA_BLOCKED_VKS:
         block, why = True, "指定屏蔽键"
 
-    # 4) 组合键判定
+    # 4) 修饰键本身永远放行：
+    #    · 游戏常把 Ctrl / Shift / Alt 当键位，按住不放也必须传得进去
+    #    · 一旦吞掉 Ctrl 的“按下”，别的程序就收不到 Ctrl，白名单里的 Ctrl+C 也就形同失效
+    #    （Win 键若被上面判定为整键屏蔽，block 已是 True，不受这条影响）
+    if is_modifier and not block:
+        return False
+
+    # 5) 组合键判定
     if not block:
         if combo in ALLOW_SET:
             pass                                   # 白名单放行
@@ -573,7 +610,7 @@ def _on_key_down(vk: int) -> bool:
         _state.blocked_down.add(vk)
         _state.blocked_total += 1
         if has_real_key or vk in WIN_VKS or vk == VK_SNAPSHOT:
-            _log(f"[屏蔽] {_combo_str(combo)}    ({why})")
+            _log_throttled(combo, f"[屏蔽] {_combo_str(combo)}    ({why})")
     return block
 
 
@@ -616,6 +653,7 @@ def _config_text() -> str:
     mode_note = ("（含 Ctrl/Alt/Win 的组合一律屏蔽，除非在白名单里）" if MODE == "whitelist"
                  else "（只屏蔽黑名单 + Win 组合 + PrintScreen）")
     lines = [
+        f"版本          : {VERSION}",
         f"配置文件      : {_config_path or '（未找到，使用程序内置默认值）'}",
         f"模式          : {MODE} {mode_note}",
         f"放行白名单    : {', '.join(sorted((_combo_str(c) for c in ALLOW_SET))) or '（空）'}",
@@ -667,12 +705,27 @@ def _self_test() -> int:
         ("Shift+字母键 要放行", 0x5A, ("shift",), False),
         ("方向键 要放行", 0x26, (), False),
         ("Ctrl+W 默认屏蔽（可加到白名单）", 0x57, ("ctrl",), True),
+        # —— 左右修饰键 / 单独按修饰键：以前会被误吞，见 v1.0 修正 ——
+        ("单独按左 Ctrl 要放行", 0xA2, (), False),
+        ("单独按右 Ctrl 要放行", 0xA3, (), False),
+        ("按住左 Ctrl 再按右 Ctrl 要放行", 0xA3, ("lctrl",), False),
+        ("按住右 Ctrl 再按左 Ctrl 要放行", 0xA2, ("rctrl",), False),
+        ("左右 Ctrl 都按住后按 C 要放行", 0x43, ("lctrl", "rctrl"), False),
+        ("按住右 Ctrl 按 C 要放行", 0x43, ("rctrl",), False),
+        ("按住右 Ctrl 按 V 要放行", 0x56, ("rctrl",), False),
+        ("单独按左 Alt 要放行", 0xA4, (), False),
+        ("按住左 Alt 再按右 Alt 要放行", 0xA5, ("lalt",), False),
+        ("单独按左 Shift 要放行", 0xA0, (), False),
+        ("按住左 Shift 再按右 Shift 要放行", 0xA1, ("lshift",), False),
+        ("左右 Ctrl 按住时按 W 仍要屏蔽", 0x57, ("lctrl", "rctrl"), True),
+        ("单独按左 Win 仍要屏蔽", 0x5B, (), True),
+        ("左 Win + Shift + S 仍要屏蔽", 0x53, ("lwin", "lshift"), True),
     ]
 
     passed = failed = 0
     print("=== 自检：判定逻辑 ===")
     for desc, vk, mods, expect_block in cases:
-        _state.held = {vk for vk, name in _MOD_VKS.items() if name in mods}
+        _state.held = {_MOD_KEY_VK[name] for name in mods if name in _MOD_KEY_VK}
         _state.blocked_down.clear()
         got = _on_key_down(vk)
         ok = got == expect_block
