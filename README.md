@@ -63,6 +63,8 @@ build_exe.bat
 2. 改 `ban_shortcut.py` 里的 `VERSION`（会显示在启动信息第一行）
 3. 双击 `make_release.bat` 发布默认版本；换版本 / 清理旧资产：
    `make_release.bat -Tag v1.1 -CleanOld`
+   删除某个旧 Release（只删 Release，git tag 保留）：
+   `make_release.bat -DeleteRelease v1.0`
 
 `release.ps1` 会自动：从 Git 凭据管理器读取已缓存的 GitHub 凭据（**只在内存里用，
 不打印、不写文件**）→ 建 Release（tag 指向 main）→ 上传 `dist\BanScreenshot.exe`

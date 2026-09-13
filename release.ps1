@@ -14,6 +14,7 @@
       -Name       Release 标题（默认 "BanScreenshot <tag>"）
       -NotesFile  说明正文文件（UTF-8；不传则用内置的默认说明）
       -CleanOld   顺便清掉 v1.0 里旧的 zip 资产
+      -DeleteRelease <tag>   只删除某个 Release（git tag 保留）后退出
       -DryRun     只做本地检查，不读凭据、不上传
 #>
 [CmdletBinding()]
@@ -23,6 +24,7 @@ param(
     [string]$Name,
     [string]$NotesFile,
     [switch]$CleanOld,
+    [string]$DeleteRelease,
     [switch]$DryRun
 )
 
@@ -56,16 +58,21 @@ if (-not $Name) { $Name = "BanScreenshot $Tag" }
 Write-Host "== BanScreenshot 发布助手 ==" -ForegroundColor Cyan
 
 # ---------- 1) 本地检查 ----------
-if (-not (Test-Path -LiteralPath $ExePath)) {
-    Write-Host "[错误] 找不到 $ExePath" -ForegroundColor Red
-    Write-Host "       请先双击 build_exe.bat 打包。" -ForegroundColor Red
-    exit 1
+if ($DeleteRelease) {
+    Write-Host ("模式   : 只删除 Release {0}（git tag 保留）" -f $DeleteRelease)
 }
-$exe = Get-Item -LiteralPath $ExePath
-$sha = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash
-Write-Host ("exe    : {0}" -f $exe.FullName)
-Write-Host ("大小   : {0} MB" -f [math]::Round($exe.Length / 1MB, 2))
-Write-Host ("SHA256 : {0}" -f $sha)
+if (-not $DeleteRelease) {
+    if (-not (Test-Path -LiteralPath $ExePath)) {
+        Write-Host "[错误] 找不到 $ExePath" -ForegroundColor Red
+        Write-Host "       请先双击 build_exe.bat 打包。" -ForegroundColor Red
+        exit 1
+    }
+    $exe = Get-Item -LiteralPath $ExePath
+    $sha = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash
+    Write-Host ("exe    : {0}" -f $exe.FullName)
+    Write-Host ("大小   : {0} MB" -f [math]::Round($exe.Length / 1MB, 2))
+    Write-Host ("SHA256 : {0}" -f $sha)
+}
 
 $remote = (git -C $root remote get-url origin).Trim()
 if ($remote -notmatch 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/]+?)(\.git)?$') {
@@ -79,10 +86,11 @@ Write-Host ("仓库   : {0}/{1}" -f $owner, $repo)
 Write-Host ("tag    : {0}" -f $Tag)
 
 # ---------- 2) 说明正文 ----------
-if ($NotesFile) {
-    $notes = Get-Content -LiteralPath $NotesFile -Raw -Encoding UTF8
-    Write-Host ("说明   : 来自 {0}" -f $NotesFile)
-} else {
+if (-not $DeleteRelease) {
+    if ($NotesFile) {
+        $notes = Get-Content -LiteralPath $NotesFile -Raw -Encoding UTF8
+        Write-Host ("说明   : 来自 {0}" -f $NotesFile)
+    } else {
     $notes = @"
 ## BanScreenshot $Tag
 
@@ -105,9 +113,10 @@ if ($NotesFile) {
 - 若游戏带内核级反作弊导致钩子无效，请参考 README 的注册表方案
 - Ctrl+Alt+Del 无法被拦截（系统保留），可作应急出口
 "@
-    Write-Host "说明   : 使用内置默认文案"
+        Write-Host "说明   : 使用内置默认文案"
+    }
+    $notes = $notes.TrimEnd() + "`n`nSHA256（BanScreenshot.exe）：$sha`n"
 }
-$notes = $notes.TrimEnd() + "`n`nSHA256（BanScreenshot.exe）：$sha`n"
 
 if ($DryRun) {
     Write-Host ""
@@ -141,6 +150,15 @@ $script:headers = @{
 try {
     $me = Invoke-GitHub -Uri "https://api.github.com/user"
     Write-Host ("账号   : {0}" -f $me.login)
+
+    # ---------- 3.5) 只删除某个 Release（git tag 保留）----------
+    if ($DeleteRelease) {
+        Write-Host ("删除 Release {0} …" -f $DeleteRelease)
+        $victim = Invoke-GitHub -Uri "$api/releases/tags/$DeleteRelease"
+        Invoke-GitHub -Uri "$api/releases/$($victim.id)" -Method Delete
+        Write-Host ("已删除 Release {0}（git tag 仍保留，需要的话手动删 tag 即可）。" -f $DeleteRelease) -ForegroundColor Green
+        exit 0
+    }
 
     # ---------- 4) 找 Release，没有就建 ----------
     $rel = $null
