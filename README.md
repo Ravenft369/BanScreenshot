@@ -57,6 +57,17 @@ build_exe.bat
 > 想让某个游戏固定一套配置？把 exe 和对应 ini 一起放进那个游戏的文件夹，
 > 双击 exe 时它会优先读自己旁边的 ini。
 
+### 发布到 GitHub Releases（维护者用）
+
+1. `build_exe.bat` 打包
+2. 改 `ban_shortcut.py` 里的 `VERSION`（会显示在启动信息第一行）
+3. 双击 `make_release.bat` 发布默认版本；换版本 / 清理旧资产：
+   `make_release.bat -Tag v1.1 -CleanOld`
+
+`release.ps1` 会自动：从 Git 凭据管理器读取已缓存的 GitHub 凭据（**只在内存里用，
+不打印、不写文件**）→ 建 Release（tag 指向 main）→ 上传 `dist\BanScreenshot.exe`
+→ 写入说明并附上 SHA256。同名资产会先删后传，所以脚本可以重复运行。
+
 ---
 
 ## 配置文件 `ban_shortcut.ini`
@@ -308,6 +319,7 @@ reg add "HKCU\Control Panel\Keyboard" /v PrintScreenKeyForSnippingEnabled /t REG
 | --- | --- |
 | `dist\BanScreenshot.exe` | **打包好的成品**（单文件，双击即用，自动提权） |
 | `build_exe.bat` | 打包脚本：一键生成上面的 exe（需要 Python + 联网装 PyInstaller） |
+| `release.ps1` / `make_release.bat` | 维护者工具：把 exe 发布到 GitHub Releases（自动读取已缓存的凭据） |
 | `ban_shortcut.py` | 主程序源码：低层键盘钩子 + 屏蔽规则 + 配置文件/参数处理 |
 | `ban_shortcut.ini` | 配置文件（首次运行自动生成，**不纳入版本管理**；exe 只读它旁边那份） |
 | `BanScreenshot.spec` | PyInstaller 打包配置（自动生成，一般不用管） |
